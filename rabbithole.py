@@ -2,10 +2,24 @@
 # -*- coding: utf-8 -*-
 
 import requests
+from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
+from clint.textui.progress import Bar as ProgressBar
+from clint.textui import colored as c
 from os import listdir, remove
 from os.path import isfile, join
 import sys
 
+
+
+def create_callback(encoder, filename):
+    encoder_len = encoder.len / 1024.0 / 1024.0
+    _label = '{} (MB)'.format( c.blue(filename, bold=True) )
+    bar = ProgressBar(expected_size=encoder_len, filled_char=c.yellow('='), label=_label, hide=False)
+
+    def callback(monitor):
+        bar.show(monitor.bytes_read / 1024.0 / 1024.0)
+
+    return callback
 
 
 class YandexApi(object):
@@ -55,6 +69,23 @@ class YandexApi(object):
         if r.status_code == 201:
             remove(local_path)
 
+    def post_file2(self, path, local_path, filename):
+        put_url = self._get_url_for_post_file(path)
+        e = MultipartEncoder(
+            fields={'file': (filename, open(local_path, 'rb'), 'text/plain')}
+        )
+        callback = create_callback(e, filename)
+        m = MultipartEncoderMonitor(e, callback)
+        r = requests.put(put_url, data=m, headers={'Content-Type': m.content_type})
+
+        if r.status_code == 201:
+            remove(local_path)
+            print("\nDone[{}]: {} -> {}".format(
+                c.green(r.status_code), 
+                local_path, 
+                path
+            ))
+
 
 yd = YandexApi()
 # yd.about_disk()
@@ -72,5 +103,5 @@ else:
 for file_name in onlyfiles:
     filepath = join(dir_path, file_name)
     remote_path = join(remote_dir, file_name)
-    yd.post_file(remote_path, filepath)
+    yd.post_file2(remote_path, filepath, file_name)
     
