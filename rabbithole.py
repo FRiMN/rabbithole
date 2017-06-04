@@ -6,6 +6,7 @@ import os
 import configparser
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from daemon import Daemon
 import time
 import sys
 
@@ -13,7 +14,8 @@ import sys
 
 home_dir = os.path.expanduser("~")
 config = configparser.ConfigParser()
-config.read('{}/.config/rabbithole.ini'.format(home_dir))
+pidfile = '/var/run/user/1000/rabbithole.pid'
+observers = []
 
 
 
@@ -34,14 +36,8 @@ class YandexApi(object):
         url = '{}/{}/disk/'.format(self.host, self.version)
         r = requests.get(url, headers=self.headers)
         data = r.json()
-
-        print(r.json())
-
-        self.total_space = data['total_space']
-        self.used_space = data['used_space']
-        self.free_space = self.total_space - self.used_space
-
-        print(self.free_space)
+        data['free_space'] = data['total_space'] - data['used_space']
+        return data
 
     def _get_url_for_post_file(self, path):
         url = '{}/{}/disk/resources/upload'.format(self.host, self.version)
@@ -55,16 +51,40 @@ class YandexApi(object):
         if r.status_code == 200:
             return data['href']
         else:
-            print(data)
-            sys.exit()
+            print(data['description'])
+            return None
 
     def post_file(self, path, local_path):
-        put_url = self._get_url_for_post_file(path)
-        files = {'file': open(local_path, 'rb')}
-        r = requests.put(put_url, files=files)
+        if self.enough_space(local_path) and self.allowed_size(local_path):
+            put_url = self._get_url_for_post_file(path)
+            if put_url:
+                files = {'file': open(local_path, 'rb')}
+                r = requests.put(put_url, files=files)
 
-        if r.status_code == 201:
-            os.remove(local_path)
+                if r.status_code == 201:
+                    os.remove(local_path)
+        else:
+            print('The file size is more valid or there is insufficient free space in the cloud.')
+
+    def enough_space(self, local_path):
+        info = self.about_disk()
+        free_space = info['free_space']
+        statinfo = os.stat(local_path)
+        filesize_bytes = statinfo.st_size
+        if free_space > filesize_bytes:
+            return True
+        else:
+            return False
+
+    def allowed_size(self, local_path):
+        info = self.about_disk()
+        max_size = info['max_file_size']
+        statinfo = os.stat(local_path)
+        filesize_bytes = statinfo.st_size
+        if filesize_bytes > max_size:
+            return False
+        else:
+            return True
 
 
 class Dispatcher(FileSystemEventHandler):
@@ -81,9 +101,17 @@ class Dispatcher(FileSystemEventHandler):
             self.cloud_api.post_file(remote_path, local_path)
 
 
-def main():
-    observers = []
+class RabbitHole(Daemon):
+    def run(self):
+        load_config()
+        start()
 
+
+def load_config():
+    config.read('{}/.config/rabbithole.ini'.format(home_dir))
+
+
+def start():
     for observe_dir in config.sections():
         conf = config[observe_dir]
         abs_observe_dir = os.path.expanduser(observe_dir)
@@ -103,10 +131,32 @@ def main():
         while True:
             time.sleep(1)
     finally:
-        for observer in observers:
-            observer.stop()
-            observer.join()
+        stop()
+
+
+def stop():
+    for observer in observers:
+        observer.stop()
+        observer.join()
+
+
+def print_help():
+    print("""start, stop, reload""")
 
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) > 1:
+        rh = RabbitHole(pidfile)
+        command = sys.argv[1]
+
+        if command == 'start':
+            rh.start()
+        elif command == 'stop':
+            rh.stop()
+        elif command in ('reload', 'restart'):
+            rh.restart()
+        else:
+            print_help()
+    else:
+        load_config()
+        start()
