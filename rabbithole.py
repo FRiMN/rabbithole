@@ -10,8 +10,6 @@ from daemon import Daemon
 import time
 import sys
 import logging
-# import asyncio
-# from multiprocessing import Process 
 
 
 
@@ -118,12 +116,6 @@ class Dispatcher(FileSystemEventHandler):
         self.remote_dir = remote_dir
         self.cloud_api = cloud_api
 
-    def worker(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        # loop = asyncio.get_event_loop()
-        loop.run_until_complete(   self.cloud_api.post_file(self.remote_path, self.local_path)       )
-
     def dispatch(self, event):
         if event.event_type == 'created' and not event.is_directory:
             logging.debug('dispatch event %s', event)
@@ -132,21 +124,6 @@ class Dispatcher(FileSystemEventHandler):
             self.remote_path = os.path.join(self.remote_dir, filename)
             logging.debug('posting file %s...', local_path)
             self.cloud_api.post_file(self.remote_path, self.local_path)
-
-            # p = Process(target=self.worker)
-            # p.start()
-            # p.join()
-            
-            
-
-
-# class Job(Greenlet):
-#     def __init__(self, req):
-#         Greenlet.__init__(self)
-#         self.req = req
-
-#     def _run(self):
-#         req()
 
 
 class RabbitHole(Daemon):
