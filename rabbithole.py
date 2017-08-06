@@ -9,13 +9,25 @@ from watchdog.events import FileSystemEventHandler
 from daemon import Daemon
 import time
 import sys
+import logging
+# import asyncio
+# from multiprocessing import Process 
 
 
 
 home_dir = os.path.expanduser("~")
 config = configparser.ConfigParser()
 pidfile = '/var/run/user/1000/rabbithole.pid'
+local_share_path = os.path.join(home_dir, '.local/share/rabbithole')
+logfile = os.path.join(local_share_path, 'rabbithole.log')
+os.makedirs(local_share_path, exist_ok=True)
 observers = []
+logging.basicConfig(
+    filename=logfile, 
+    level=logging.DEBUG, 
+    format="%(asctime)s [%(levelname)8s] %(message)s", 
+    datefmt='%d-%m-%Y %H:%M:%S'
+)
 
 
 
@@ -33,13 +45,20 @@ class YandexApi(object):
         }
 
     def about_disk(self):
+        logging.debug('Get cloud info')
         url = '{}/{}/disk/'.format(self.host, self.version)
         r = requests.get(url, headers=self.headers)
         data = r.json()
+
+        if r.status_code != 200:
+            logging.error('Failed to get cloud info: status_code=%d (%s)', r.status_code, r.reason)
+            return None
+        
         data['free_space'] = data['total_space'] - data['used_space']
         return data
 
     def _get_url_for_post_file(self, path):
+        logging.debug('Get url for upload to %s', path)
         url = '{}/{}/disk/resources/upload'.format(self.host, self.version)
         payload = {
             'path': path,
@@ -51,10 +70,11 @@ class YandexApi(object):
         if r.status_code == 200:
             return data['href']
         else:
-            print(data['description'])
+            logging.error(data['description'])
             return None
 
     def post_file(self, path, local_path):
+        logging.debug('Transfer file %s to cloud', local_path)
         if self.enough_space(local_path) and self.allowed_size(local_path):
             put_url = self._get_url_for_post_file(path)
             if put_url:
@@ -63,8 +83,13 @@ class YandexApi(object):
 
                 if r.status_code == 201:
                     os.remove(local_path)
+                else:
+                    logging.error('Upload failed: status_code=%d (%s)', r.status_code, r.reason)
+
+                return r.status_code
         else:
-            print('The file size is more valid or there is insufficient free space in the cloud.')
+            logging.error('The file size is more valid or there is insufficient free space in the cloud.')
+            return -1
 
     def enough_space(self, local_path):
         info = self.about_disk()
@@ -93,12 +118,35 @@ class Dispatcher(FileSystemEventHandler):
         self.remote_dir = remote_dir
         self.cloud_api = cloud_api
 
+    def worker(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        # loop = asyncio.get_event_loop()
+        loop.run_until_complete(   self.cloud_api.post_file(self.remote_path, self.local_path)       )
+
     def dispatch(self, event):
         if event.event_type == 'created' and not event.is_directory:
-            local_path = event.src_path
+            logging.debug('dispatch event %s', event)
+            self.local_path = local_path = event.src_path
             local_dir, filename = os.path.split(local_path)
-            remote_path = os.path.join(self.remote_dir, filename)
-            self.cloud_api.post_file(remote_path, local_path)
+            self.remote_path = os.path.join(self.remote_dir, filename)
+            logging.debug('posting file %s...', local_path)
+            self.cloud_api.post_file(self.remote_path, self.local_path)
+
+            # p = Process(target=self.worker)
+            # p.start()
+            # p.join()
+            
+            
+
+
+# class Job(Greenlet):
+#     def __init__(self, req):
+#         Greenlet.__init__(self)
+#         self.req = req
+
+#     def _run(self):
+#         req()
 
 
 class RabbitHole(Daemon):
@@ -115,17 +163,19 @@ def start():
     for observe_dir in config.sections():
         conf = config[observe_dir]
         abs_observe_dir = os.path.expanduser(observe_dir)
-        remote_dir = conf['remote_dir']
-        cloud = conf['cloud']
-        if cloud == 'yandex':
-            token = conf['token']
-            cloud_api = YandexApi(token)
+        if os.path.exists(abs_observe_dir):
+            remote_dir = conf['remote_dir']
+            cloud = conf['cloud']
+            if cloud == 'yandex':
+                token = conf['token']
+                cloud_api = YandexApi(token)
 
-        observer = Observer()
-        dispatcher = Dispatcher(remote_dir, cloud_api)
-        observer.schedule(dispatcher, abs_observe_dir, recursive=False)
-        observer.start()
-        observers.append(observer)
+            observer = Observer()
+            dispatcher = Dispatcher(remote_dir, cloud_api)
+            observer.schedule(dispatcher, abs_observe_dir, recursive=False)
+            observer.start()
+            logging.info('Watching {}'.format(abs_observe_dir))
+            observers.append(observer)
 
     try:
         while True:
@@ -141,7 +191,9 @@ def stop():
 
 
 def print_help():
-    print("""start, stop, reload""")
+    print("""start, stop, reload
+    Get new token for Yandex.Disk: https://oauth.yandex.ru/authorize?response_type=token&client_id={}
+    """.format(YandexApi.client_id))
 
 
 if __name__ == '__main__':
