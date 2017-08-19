@@ -80,6 +80,15 @@ class YandexApi(object):
                 r = requests.put(put_url, files=files)
 
                 if r.status_code == 201:
+                    filesize_bytes = os.path.getsize(local_path)
+                    if r.elapsed:
+                        secs = r.elapsed.total_seconds()
+                        mbs = filesize_bytes / 1024 / 1024 / secs
+                        if mbs > 1:
+                            logging.debug('Done: %f sec, %f MB/s', secs, mbs)
+                        else:
+                            kbs = filesize_bytes / 1024 / secs
+                            logging.debug('Done: %f sec, %f KB/s', secs, kbs)
                     os.remove(local_path)
                 else:
                     logging.error('Upload failed: status_code=%d (%s)', r.status_code, r.reason)
@@ -137,24 +146,24 @@ def load_config():
 
 
 def start():
-    for observe_dir in config.sections():
-        conf = config[observe_dir]
-        abs_observe_dir = os.path.expanduser(observe_dir)
-        if os.path.exists(abs_observe_dir):
-            remote_dir = conf['remote_dir']
-            cloud = conf['cloud']
-            if cloud == 'yandex':
-                token = conf['token']
-                cloud_api = YandexApi(token)
-
-            observer = Observer()
-            dispatcher = Dispatcher(remote_dir, cloud_api)
-            observer.schedule(dispatcher, abs_observe_dir, recursive=False)
-            observer.start()
-            logging.info('Watching {}'.format(abs_observe_dir))
-            observers.append(observer)
-
     try:
+        for observe_dir in config.sections():
+            conf = config[observe_dir]
+            abs_observe_dir = os.path.expanduser(observe_dir)
+            if os.path.exists(abs_observe_dir):
+                remote_dir = conf['remote_dir']
+                cloud = conf['cloud']
+                if cloud == 'yandex':
+                    token = conf['token']
+                    cloud_api = YandexApi(token)
+
+                observer = Observer()
+                dispatcher = Dispatcher(remote_dir, cloud_api)
+                observer.schedule(dispatcher, abs_observe_dir, recursive=False)
+                observer.start()
+                logging.info('Watching {}'.format(abs_observe_dir))
+                observers.append(observer)
+
         while True:
             time.sleep(1)
     finally:
@@ -163,6 +172,7 @@ def start():
 
 def stop():
     for observer in observers:
+        observer.unschedule_all()
         observer.stop()
         observer.join()
 
