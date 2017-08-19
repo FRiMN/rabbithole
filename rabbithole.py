@@ -15,10 +15,12 @@ import logging
 
 home_dir = os.path.expanduser("~")
 config = configparser.ConfigParser()
-pidfile = '/var/run/user/1000/rabbithole.pid'
+uid = os.getuid()
+pidfile = '/var/run/user/{:d}/rabbithole.pid'.format(uid)
 local_share_path = os.path.join(home_dir, '.local/share/rabbithole')
 logfile = os.path.join(local_share_path, 'rabbithole.log')
 os.makedirs(local_share_path, exist_ok=True)
+# list of active observers
 observers = []
 logging.basicConfig(
     filename=logfile, 
@@ -99,6 +101,7 @@ class YandexApi(object):
             return -1
 
     def enough_space(self, local_path):
+        """ Checks that there is enough free space in the cloud """
         info = self.about_disk()
         free_space = info['free_space']
         statinfo = os.stat(local_path)
@@ -109,6 +112,7 @@ class YandexApi(object):
             return False
 
     def allowed_size(self, local_path):
+        """ Checks that the file size does not exceed the maximum allowed size """
         info = self.about_disk()
         max_size = info['max_file_size']
         statinfo = os.stat(local_path)
