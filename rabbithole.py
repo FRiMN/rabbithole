@@ -182,7 +182,7 @@ def stop():
 
 
 def print_help():
-    print("""start, stop, reload
+    print("""start, stop, reload (restart)
     Get new token for Yandex.Disk: https://oauth.yandex.ru/authorize?response_type=token&client_id={}
     """.format(YandexApi.client_id))
 
