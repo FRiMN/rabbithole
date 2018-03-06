@@ -3,6 +3,7 @@
 
 import requests
 import os
+import errno
 import configparser
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -35,6 +36,7 @@ class YandexApi(object):
     host = 'https://cloud-api.yandex.net'
     version = 'v1'
     client_id = '14e6df77206c47ab8d4e0414503ed242'
+    prefix = '{}/{}'.format(host, version)
 
     def __init__(self, token):
         self.token = token
@@ -46,7 +48,7 @@ class YandexApi(object):
 
     def about_disk(self):
         logging.debug('Get cloud info')
-        url = '{}/{}/disk/'.format(self.host, self.version)
+        url = '{}/disk/'.format(self.prefix)
         r = requests.get(url, headers=self.headers)
         data = r.json()
 
@@ -59,7 +61,7 @@ class YandexApi(object):
 
     def _get_url_for_post_file(self, path):
         logging.debug('Get url for upload to %s', path)
-        url = '{}/{}/disk/resources/upload'.format(self.host, self.version)
+        url = '{}/disk/resources/upload'.format(self.prefix)
         payload = {
             'path': path,
             'overwrite': 'false',
@@ -73,6 +75,15 @@ class YandexApi(object):
             logging.error(data['description'])
             return None
 
+    @staticmethod
+    def total_logging(secs, filesize_bytes):
+        mbs = filesize_bytes / 1024 / 1024 / secs
+        if mbs > 1:
+            logging.debug('Done: %f sec, %f MB/s', secs, mbs)
+        else:
+            kbs = filesize_bytes / 1024 / secs
+            logging.debug('Done: %f sec, %f KB/s', secs, kbs)
+
     def post_file(self, path, local_path):
         logging.debug('Transfer file %s to cloud', local_path)
         if self.enough_space(local_path) and self.allowed_size(local_path):
@@ -84,13 +95,8 @@ class YandexApi(object):
                 if r.status_code == 201:
                     filesize_bytes = os.path.getsize(local_path)
                     if r.elapsed:
-                        secs = r.elapsed.total_seconds()
-                        mbs = filesize_bytes / 1024 / 1024 / secs
-                        if mbs > 1:
-                            logging.debug('Done: %f sec, %f MB/s', secs, mbs)
-                        else:
-                            kbs = filesize_bytes / 1024 / secs
-                            logging.debug('Done: %f sec, %f KB/s', secs, kbs)
+                        ts = r.elapsed.total_seconds()
+                        self.total_logging(ts, filesize_bytes)
                     os.remove(local_path)
                 else:
                     logging.error('Upload failed: status_code=%d (%s)', r.status_code, r.reason)
@@ -99,6 +105,23 @@ class YandexApi(object):
         else:
             logging.error('The file size is more valid or there is insufficient free space in the cloud.')
             return -1
+
+    def create_dir(self, path):
+        if path[0] == '/':
+            path = path[1:]
+        logging.debug('Create dir: %s', path)
+        dir_url = '{}/disk/resources'.format(self.prefix)
+        payload = {
+            'path': path,
+        }
+        r = requests.put(dir_url, params=payload, headers=self.headers)
+
+        if r.status_code == 201:
+            logging.debug('Dir %s created', path)
+            return True
+        else:
+            logging.error('Create dir failed: status_code=%d (%s), message=%s', r.status_code, r.reason, r.json())
+            return False
 
     def enough_space(self, local_path):
         """ Checks that there is enough free space in the cloud """
@@ -124,19 +147,54 @@ class YandexApi(object):
 
 
 class Dispatcher(FileSystemEventHandler):
-    def __init__(self, remote_dir, cloud_api):
+    def __init__(self, remote_dir, abs_observe_dir, cloud_api):
         super().__init__()
         self.remote_dir = remote_dir
+        self.observe_dir = abs_observe_dir
         self.cloud_api = cloud_api
 
+    def remove_empty_dirs(self, local_dir):
+        logging.debug('Try remove empty dir: %s...', local_dir)
+        
+        if local_dir.startswith(os.path.abspath(self.observe_dir)+'/'):
+            try:
+                os.rmdir(local_dir)
+            except OSError as err:
+                if err.errno == errno.ENOTEMPTY:
+                    logging.debug('not empty')
+                else:
+                    raise
+        else:
+            logging.debug('it is root dir. Abort')
+
+    def get_remote_subdirs(self, path):
+        remote_subdirs = path.replace(self.observe_dir, '')
+        if remote_subdirs.startswith('/'):
+            remote_subdirs = remote_subdirs[1:]
+        if not remote_subdirs.endswith('/'):
+            remote_subdirs + '/'
+        return remote_subdirs
+
     def dispatch(self, event):
-        if event.event_type == 'created' and not event.is_directory:
-            logging.debug('dispatch event %s', event)
-            self.local_path = local_path = event.src_path
-            local_dir, filename = os.path.split(local_path)
-            self.remote_path = os.path.join(self.remote_dir, filename)
-            logging.debug('posting file %s...', local_path)
-            self.cloud_api.post_file(self.remote_path, self.local_path)
+        logging.debug('dispatch (%s) event %s', event.event_type, event)
+
+        if event.event_type == 'created':
+            local_path = event.src_path
+
+            if event.is_directory:
+                remote_subdirs = self.get_remote_subdirs(local_path)
+                remote_path = os.path.join(self.remote_dir, remote_subdirs)
+
+                logging.debug('create dir %s...', local_path)
+                self.cloud_api.create_dir(remote_path)
+            else:
+                local_dir, filename = os.path.split(local_path)
+                remote_subdirs = self.get_remote_subdirs(local_dir)
+                remote_path = os.path.join(self.remote_dir, remote_subdirs, filename)
+
+                logging.debug('posting file %s...', local_path)
+                self.cloud_api.post_file(remote_path, local_path)
+                self.remove_empty_dirs(local_dir)
 
 
 class RabbitHole(Daemon):
@@ -160,10 +218,12 @@ def start():
                 if cloud == 'yandex':
                     token = conf['token']
                     cloud_api = YandexApi(token)
+                else:
+                    raise KeyError
 
                 observer = Observer()
-                dispatcher = Dispatcher(remote_dir, cloud_api)
-                observer.schedule(dispatcher, abs_observe_dir, recursive=False)
+                dispatcher = Dispatcher(remote_dir, abs_observe_dir, cloud_api)
+                observer.schedule(dispatcher, abs_observe_dir, recursive=True)
                 observer.start()
                 logging.info('Watching {}'.format(abs_observe_dir))
                 observers.append(observer)
