@@ -235,8 +235,9 @@ def start():
                             remote_path = os.path.join(cloud_api.remote_dir, remote_sub_path, filename)
 
                             params.append((remote_path, local_path))
-                    with Pool(default_processes_per_observer) as p:
-                        p.starmap(cloud_api.post_file, params)
+                    if params:
+                        with Pool(default_processes_per_observer) as p:
+                            p.starmap(cloud_api.post_file, params)
 
                 time.sleep(1)
         finally:
