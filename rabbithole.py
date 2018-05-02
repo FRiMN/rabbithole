@@ -125,25 +125,28 @@ class YandexApi(object):
             return False
 
     def create_dir(self, path):
-        if path[0] == '/':
-            path = path[1:]
-        path_list = path.split('/')
-        sub_path = '/'.join(path_list[:-1])
-        if self.remote_dir[1:] != sub_path:
-            self.create_dir(sub_path)
+        if len(path) > 0:
+            if path[0] == '/':
+                path = path[1:]
+            path_list = path.split('/')
+            sub_path = '/'.join(path_list[:-1])
+            if self.remote_dir[1:] != sub_path:
+                self.create_dir(sub_path)
 
-        logging.debug('Create dir: %s', path)
-        dir_url = '{}/disk/resources'.format(self.prefix)
-        payload = {
-            'path': path,
-        }
-        r = requests.put(dir_url, params=payload, headers=self.headers)
+            logging.debug('Create dir: %s', path)
+            dir_url = '{}/disk/resources'.format(self.prefix)
+            payload = {
+                'path': path,
+            }
+            r = requests.put(dir_url, params=payload, headers=self.headers)
 
-        if r.status_code == 201:
-            logging.debug('Dir %s created', path)
-            return True
+            if r.status_code == 201:
+                logging.debug('Dir %s created', path)
+                return True
+            else:
+                logging.error('Create dir failed: status_code=%d (%s), message=%s', r.status_code, r.reason, r.json())
+                return False
         else:
-            logging.error('Create dir failed: status_code=%d (%s), message=%s', r.status_code, r.reason, r.json())
             return False
 
     def enough_space(self, local_path):
