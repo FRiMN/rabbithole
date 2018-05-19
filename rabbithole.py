@@ -89,12 +89,20 @@ class YandexApi(object):
 
     @staticmethod
     def total_logging(secs, filesize_bytes, remote_path, local_path):
-        mbs = filesize_bytes / 1024 / 1024 / secs
-        if mbs > 1:
-            logging.debug('Done: %f sec, %f MB/s (%s, %s)', secs, mbs, remote_path, local_path)
+        kb = filesize_bytes / 1024
+        mb = kb / 1024
+        mbs = mb / secs
+
+        if mb < 1:
+            size = '{} KB'.format(kb)
         else:
-            kbs = filesize_bytes / 1024 / secs
-            logging.debug('Done: %f sec, %f KB/s (%s, %s)', secs, kbs, remote_path, local_path)
+            size = '{} MB'.format(mb)
+
+        if mbs > 1:
+            logging.debug('Done: %f sec, %f MB/s, %s (%s, %s)', secs, mbs, size, remote_path, local_path)
+        else:
+            kbs = kb / secs
+            logging.debug('Done: %f sec, %f KB/s, %s (%s, %s)', secs, kbs, size, remote_path, local_path)
 
     def post_file(self, remote_path, local_path):
         logging.debug('Transfer file %s to cloud', local_path)
@@ -177,9 +185,8 @@ def load_config():
 
 
 def remove_empty_dirs(local_dir, observe_dir):
-    logging.debug('Try remove empty dir: %s...', local_dir)
-
     if local_dir.startswith(observe_dir) and len(local_dir) > len(observe_dir):
+        logging.debug('Try remove empty dir: %s...', local_dir)
         try:
             os.rmdir(local_dir)
             path_list = local_dir.split('/')
@@ -190,8 +197,6 @@ def remove_empty_dirs(local_dir, observe_dir):
                 logging.debug('%s not empty', local_dir)
             else:
                 raise
-    else:
-        logging.debug('it is root dir. Abort')
 
 
 def start():
