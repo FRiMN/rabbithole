@@ -91,18 +91,20 @@ class YandexApi(object):
     def total_logging(secs, filesize_bytes, remote_path, local_path):
         kb = filesize_bytes / 1024
         mb = kb / 1024
+        kbs = kb / secs
         mbs = mb / secs
 
         if mb < 1:
-            size = '{} KB'.format(kb)
+            size = '{:.2f} KB'.format(kb)
         else:
-            size = '{} MB'.format(mb)
+            size = '{:.2f} MB'.format(mb)
 
         if mbs > 1:
-            logging.debug('Done: %f sec, %f MB/s, %s (%s, %s)', secs, mbs, size, remote_path, local_path)
+            speed = '{:.2f} MB/s'.format(mbs)
         else:
-            kbs = kb / secs
-            logging.debug('Done: %f sec, %f KB/s, %s (%s, %s)', secs, kbs, size, remote_path, local_path)
+            speed = '{:.2f} KB/s'.format(kbs)
+
+        logging.debug('Done: {:.3f} sec, {}, {} ({}, {})'.format(secs, speed, size, remote_path, local_path))
 
     def post_file(self, remote_path, local_path):
         logging.debug('Transfer file %s to cloud', local_path)
