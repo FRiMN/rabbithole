@@ -15,7 +15,6 @@ from multiprocessing.pool import Pool
 from daemon import Daemon
 
 
-
 home_dir = os.path.expanduser("~")
 config = configparser.ConfigParser()
 uid = os.getuid()
