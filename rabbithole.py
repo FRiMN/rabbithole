@@ -111,19 +111,19 @@ class YandexApi(object):
         if self.enough_space(local_path) and self.allowed_size(local_path):
             put_url = self._get_url_for_post_file(remote_path, dry=False)
             if put_url:
-                files = {'file': open(local_path, 'rb')}
-                r = requests.put(put_url, files=files)
+                with open(local_path, 'rb') as file:
+                    r = requests.put(put_url, data=file)
 
-                if r.status_code == 201:
-                    filesize_bytes = os.path.getsize(local_path)
-                    if r.elapsed:
-                        ts = r.elapsed.total_seconds()
-                        self.total_logging(ts, filesize_bytes, remote_path, local_path)
-                    os.remove(local_path)
-                    local_dirs = os.path.dirname(local_path)
-                    remove_empty_dirs(local_dirs, self.observe_dir)
-                else:
-                    logging.error('Upload failed: status_code=%d (%s)', r.status_code, r.reason)
+                    if r.status_code == 201:
+                        filesize_bytes = os.path.getsize(local_path)
+                        if r.elapsed:
+                            ts = r.elapsed.total_seconds()
+                            self.total_logging(ts, filesize_bytes, remote_path, local_path)
+                        os.remove(local_path)
+                        local_dirs = os.path.dirname(local_path)
+                        remove_empty_dirs(local_dirs, self.observe_dir)
+                    else:
+                        logging.error('Upload failed: status_code=%d (%s)', r.status_code, r.reason)
 
                 return True
             else:
